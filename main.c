@@ -1,5 +1,5 @@
 /*  This file is part of "sshpass", a tool for batch running password ssh authentication
- *  Copyright (C) 2006 Lingnu Open Source Consulting Ltd.
+ *  Copyright (C) 2006, 2015 Lingnu Open Source Consulting Ltd.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -69,6 +69,9 @@ struct {
 	int fd;
 	const char *password;
     } pwsrc;
+
+    const char *pwprompt;
+    int verbose;
 } args;
 
 static void show_help()
@@ -79,6 +82,8 @@ static void show_help()
 	    "   -p password   Provide password as argument (security unwise)\n"
 	    "   -e            Password is passed as env-var \"SSHPASS\"\n"
 	    "   With no parameters - password will be taken from stdin\n\n"
+            "   -P prompt     Which string should sshpass search for to detect a password prompt\n"
+            "   -v            Be verbose about what you're doing\n"
 	    "   -h            Show help (this screen)\n"
 	    "   -V            Print version information\n"
 	    "At most one of -f, -d, -p or -e should be used\n");
@@ -99,7 +104,7 @@ static int parse_options( int argc, char *argv[] )
     fprintf(stderr, "Conflicting password source\n"); \
     error=RETURN_CONFLICTING_ARGUMENTS; }
 
-    while( (opt=getopt(argc, argv, "+f:d:p:heV"))!=-1 && error==-1 ) {
+    while( (opt=getopt(argc, argv, "+f:d:p:P:heVv"))!=-1 && error==-1 ) {
 	switch( opt ) {
 	case 'f':
 	    // Password should come from a file
@@ -130,6 +135,12 @@ static int parse_options( int argc, char *argv[] )
                     optarg[i]='z';
             }
 	    break;
+        case 'P':
+            args.pwprompt=optarg;
+            break;
+        case 'v':
+            args.verbose++;
+            break;
 	case 'e':
 	    VIRGIN_PWTYPE;
 
@@ -149,9 +160,13 @@ static int parse_options( int argc, char *argv[] )
 	    error=RETURN_NOERROR;
 	    break;
 	case 'V':
-	    printf("%s (C) 2006-2011 Lingnu Open Source Consulting Ltd.\n"
+	    printf("%s\n"
+                    "(C) 2006-2011 Lingnu Open Source Consulting Ltd.\n"
+                    "(C) 2015-2016 Shachar Shemesh\n"
 		    "This program is free software, and can be distributed under the terms of the GPL\n"
-		    "See the COPYING file for more information.\n", PACKAGE_STRING );
+		    "See the COPYING file for more information.\n"
+                    "\n"
+                    "Using \"%s\" as the default password prompt indicator.\n", PACKAGE_STRING, PASSWORD_PROMPT );
 	    exit(0);
 	    break;
 	}
@@ -359,26 +374,44 @@ int handleoutput( int fd )
     // We are looking for the string
     static int prevmatch=0; // If the "password" prompt is repeated, we have the wrong password.
     static int state1, state2;
-    static const char compare1[]="assword:"; // Asking for a password
+    static int firsttime = 1;
+    static const char *compare1=PASSWORD_PROMPT; // Asking for a password
     static const char compare2[]="The authenticity of host "; // Asks to authenticate host
     // static const char compare3[]="WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!"; // Warns about man in the middle attack
     // The remote identification changed error is sent to stderr, not the tty, so we do not handle it.
     // This is not a problem, as ssh exists immediately in such a case
-    char buffer[40];
+    char buffer[256];
     int ret=0;
 
-    int numread=read(fd, buffer, sizeof(buffer) );
+    if( args.pwprompt ) {
+        compare1 = args.pwprompt;
+    }
+
+    if( args.verbose && firsttime ) {
+        firsttime=0;
+        fprintf(stderr, "SSHPASS searching for password prompt using match \"%s\"\n", compare1);
+    }
+
+    int numread=read(fd, buffer, sizeof(buffer)-1 );
+    buffer[numread] = '\0';
+    if( args.verbose ) {
+        fprintf(stderr, "SSHPASS read: %s\n", buffer);
+    }
 
     state1=match( compare1, buffer, numread, state1 );
 
     // Are we at a password prompt?
     if( compare1[state1]=='\0' ) {
 	if( !prevmatch ) {
+            if( args.verbose )
+                fprintf(stderr, "SSHPASS detected prompt. Sending password.\n");
 	    write_pass( fd );
 	    state1=0;
 	    prevmatch=1;
 	} else {
 	    // Wrong password - terminate with proper error code
+            if( args.verbose )
+                fprintf(stderr, "SSHPASS detected prompt, again. Wrong password. Terminating.\n");
 	    ret=RETURN_INCORRECT_PASSWORD;
 	}
     }
@@ -388,6 +421,8 @@ int handleoutput( int fd )
 
         // Are we being prompted to authenticate the host?
         if( compare2[state2]=='\0' ) {
+            if( args.verbose )
+                fprintf(stderr, "SSHPASS detected host authentication prompt. Exiting.\n");
             ret=RETURN_HOST_KEY_UNKNOWN;
         }
     }

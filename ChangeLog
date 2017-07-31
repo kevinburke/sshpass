@@ -1,3 +1,9 @@
+Version 1.06
+	* Add -P for overriding the password prompt we search for
+	* Add -v for verbose logging of the prompt detection prompt.
+	* Allow packagers and compilers to change the default password prompt.
+	* When giving -V, also print the default password prompt.
+
 Version 1.05
 	* OpenSSH version 5.6 closed our leaked slave PTY fd, breaking sshpass.
 	  This reverted the "better detection of child exit", unfortunately.
